@@ -1,4 +1,4 @@
-# Lab 1: Cloud Account Security, Identity & Access Management (IAM)
+# Lab 2: Secure Isolation and Multitenancy
 
 * **Course Code:** IKB42603 Cloud Computing Security Essentials
 * **Student Name:** Sharif Ammar Izzuddin Bin Sharif Yusri
