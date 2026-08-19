@@ -147,7 +147,7 @@ EP='--endpoint-url=http://localhost:4566'
 aws $EP kms create-key --description 'CCSE tenant-A master key'
 
 # 3. Store the returned KeyId into an environment variable
-KEY_A="79697a0d-df74-4eb6-84dc-395b8bce45ff"
+KEY_A="PASTE_KEYID"
 
 # 4. Encrypt a small secret payload directly using KMS
 aws $EP kms encrypt --key-id $KEY_A --plaintext "$(echo -n 'hello' | base64)" \
@@ -161,7 +161,7 @@ aws $EP kms encrypt --key-id $KEY_A --plaintext "$(echo -n 'hello' | base64)" \
 * KMS CMK Provisioning:
   * The `aws kms create-key` command created a Customer Master Key (CMK) managed by LocalStack (emulating AWS KMS).
   * The resulting metadata defined key attributes including `KeySpec: SYMMETRIC_DEFAULT` (AES-256-GCM), `KeyState: Enabled`, and `KeyUsage: ENCRYPT_DECRYPT`.
-* Centralized Key Management: The generated `KeyId` (`79697a0d-df74-4eb6-84dc-395b8bce45ff`) uniquely identifies the CMK. The key material remains isolated within the KMS control plane and is never exposed to the client or local disk.
+* Centralized Key Management: The generated `KeyId` uniquely identifies the CMK. The key material remains isolated within the KMS control plane and is never exposed to the client or local disk.
 * Direct KMS Encryption:
   * Direct encryption via `aws kms encrypt` requires base64-encoded plaintext input (`echo -n 'hello' | base64`).
   * KMS performed the encryption internally and returned the encrypted ciphertext blob (`Nzk2OTdh...`).
@@ -216,37 +216,43 @@ echo 'Only the KMS-wrapped data key (datakey.enc) remains.'
 ## Task 6 — Per-Tenant Keys & Cryptographic Erasure
 
 ## Objective
-To demonstrate multi-tenant cryptographic isolation by provisioning a distinct Customer Master Key (CMK) for a second tenant (Tenant B), followed by performing cryptographic erasure (crypto-shredding) on Tenant A's key. This verifies that disabling or scheduling key deletion instantly renders all associated encrypted payloads permanently unrecoverable.
+To demonstrate multi-tenant cryptographic isolation by provisioning a distinct Customer Master Key (CMK) for Tenant B, followed by performing cryptographic erasure (crypto-shredding) on Tenant A's key. This task proves that disabling or scheduling key deletion instantly renders all associated encrypted payloads permanently unrecoverable.
 
 * Commands Executed
 ```yaml
-# 1. Provision a separate KMS Master Key dedicated to Tenant B
+# 1. Provision a dedicated KMS Master Key for Tenant B
 aws $EP kms create-key --description 'CCSE tenant-B master key'
 
-# 2. Schedule deletion for Tenant A's master key with a 7-day waiting window
+# 2. Assign Tenant B's KeyId to an environment variable
+KEY_B="PASTE_KEYID"
+
+# 3. Schedule key deletion for Tenant A's Master Key ($KEY_A) with a 7-day window
 aws $EP kms schedule-key-deletion --key-id $KEY_A --pending-window-in-days 7
 
-# 3. Attempt to disable key (returns KMSInvalidStateException as key is already pending deletion)
+# 4. Attempt to explicitly disable $KEY_A (returns exception as key is already pending deletion)
 aws $EP kms disable-key --key-id $KEY_A
 
-# 4. Attempt to decrypt Tenant A's wrapped data key
+# 5. Attempt to decrypt Tenant A's wrapped data key to verify cryptographic erasure
 aws $EP kms decrypt --ciphertext-blob fileb://datakey.bin.enc 2>&1 | head -3
 ```
 
 * Screenshots / Evidence
-<img width="948" height="577" alt="Task6_1" src="https://github.com/user-attachments/assets/5d39024c-cce5-4af3-ac81-95d554c39e60" />
-<img width="938" height="102" alt="Task6_2" src="https://github.com/user-attachments/assets/ac5e3e7c-0e22-43dd-8146-af633a63f599" />
+<img width="770" height="371" alt="image" src="https://github.com/user-attachments/assets/891ccd61-2a6d-4f80-9586-004ce562b22e" />
+<img width="457" height="47" alt="image" src="https://github.com/user-attachments/assets/2d910324-540f-4d3a-b888-381f1eccf96f" />
+<img width="933" height="197" alt="image" src="https://github.com/user-attachments/assets/dd5eb5b2-c8e8-4b68-922f-e4a2f5bc0236" />
+<img width="938" height="102" alt="image" src="https://github.com/user-attachments/assets/6e555caa-4e65-4ae9-87cd-02613d6af16a" />
+
 
 ## Technical Explanation & Analysis
 * Multi-Tenant Key Isolation:
-  * A dedicated CMK was created for Tenant B (`3f5d9293-6bf6-418b-8bb5-fb231fe87074`), establishing strict cryptographic boundaries between tenants.
-  * In a multi-tenant environment, isolating data with per-tenant master keys ensures that tenant data can be cryptographically shredded individually without affecting other tenants.
+  * A dedicated CMK was generated for Tenant B (`Key_ID`) and assigned to `$KEY_B`.
+  * Establishing distinct master keys per tenant creates strict cryptographic boundaries, ensuring data belonging to one tenant cannot be decrypted using another tenant's access permissions or key material.
 * Cryptographic Erasure (Crypto-Shredding):
-  * Scheduling key deletion via `aws kms schedule-key-deletion` changed `$KEY_A`'s state to `PendingDeletion`.
-  * Attempting to call disable-key subsequently returned a `KMSInvalidStateException` because a key scheduled for deletion is already disabled by default.
-* Decryption Failure & Proof of Destruction:
-  * Executing `aws kms decrypt` on Tenant A's wrapped data key (`datakey.bin.enc`) failed with `KMSInvalidStateException: key is pending deletion`.
-  * Without access to the master key, unwrapping the data key is impossible. As a result, the underlying encrypted payload (`record.env.enc`) is cryptographically shredded and mathematically irrecoverable, providing instantaneous data sanitization across backup and storage systems.
+  * Invoking `aws kms schedule-key-deletion` shifted `$KEY_A` into the `PendingDeletion` state with a 7-day waiting period.
+  * Attempting to run `aws kms disable-key` subsequently produced a `KMSInvalidStateException`, confirming that a key scheduled for deletion is automatically deactivated and placed out of service.
+* Verification of Data Destruction:
+  * Executing `aws kms decrypt` against Tenant A's wrapped data key (`datakey.bin.enc`) failed directly with `KMSInvalidStateException: key is pending deletion`.
+  * Because the Master Key is unusable, unwrapping the Data Encryption Key (DEK) becomes mathematically impossible. As a result, the encrypted payload (`record.env.enc`) is cryptographically shredded—achieving provable, instant data deletion across all distributed cloud storage and backup locations without requiring physical disk overwriting.
 
 ---
 
